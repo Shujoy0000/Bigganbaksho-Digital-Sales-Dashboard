@@ -1,7 +1,6 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-import plotly.graph_objects as go
 import streamlit.components.v1 as components
 import os
 import datetime
@@ -13,7 +12,11 @@ logo_path = "logo.png"
 if not os.path.exists(logo_path):
     logo_path = "logo.jpg"
 
-st.set_page_config(page_title="Bigganbaksho Digital Sales Dashboard", layout="wide", page_icon="📊")
+st.set_page_config(
+    page_title="Bigganbaksho Digital Sales Dashboard",
+    layout="wide",
+    page_icon="📊"
+)
 
 # ২. কাস্টম CSS
 st.markdown("""
@@ -204,7 +207,7 @@ def load_data():
     df.columns = df.columns.astype(str).str.strip()
     df = df.dropna(how="all")
 
-    # Date column: এই শীটে Date আছে, আগের শীটে Order Date ছিল
+    # Date column
     if "Date" in df.columns:
         df["Report Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
     elif "Order Date" in df.columns:
@@ -212,7 +215,7 @@ def load_data():
     else:
         df["Report Date"] = pd.NaT
 
-    # Date না থাকলে সেই row report-এ আসবে না
+    # Date না থাকলে report-এ আসবে না
     df = df.dropna(subset=["Report Date"])
 
     # প্রয়োজনীয় numeric column
@@ -253,6 +256,15 @@ def load_data():
         df[col] = df[col].astype(str).str.strip()
         df[col] = df[col].replace(["", "nan", "None", "0"], "Unknown")
 
+    # Source spelling normalize
+    df["Source"] = df["Source"].replace({
+        "FaceBook": "Facebook",
+        "facebook": "Facebook",
+        "FACEBOOK": "Facebook",
+        "Face Book": "Facebook",
+        "FB": "Facebook"
+    })
+
     # Revenue = শীটের শেষের Product Price column
     # fallback: Product Price blank হলে Total Amount - Shipping Charge
     fallback_revenue = df["Total Amount"] - df["Shipping Charge"]
@@ -266,7 +278,6 @@ def load_data():
     df["Total Sales"] = df["Total Sales"].clip(lower=0)
 
     # Product-wise sales price করার জন্য per product discount
-    # আগে exact discount / total qty নেওয়া হচ্ছে, যেন rounding problem না হয়
     exact_unit_discount = df["Discount"] / df["Total Qty"].where(df["Total Qty"] > 0)
     df["Unit Discount"] = exact_unit_discount.fillna(df["Discount per product"]).fillna(0)
     df["Unit Discount"] = df["Unit Discount"].clip(lower=0)
@@ -441,7 +452,10 @@ def render_product_report(df_in, total_qty):
 
         product_table = pd.concat([product_table, total_row], ignore_index=True)
 
-        show_copyable_table(product_table[["Product", "Value", "Sales Price", "%"]], "product_table")
+        show_copyable_table(
+            product_table[["Product", "Value", "Sales Price", "%"]],
+            "product_table"
+        )
 
 
 # ৭. Dynamic report
@@ -537,10 +551,22 @@ try:
     if os.path.exists(logo_path):
         st.image(logo_path, width=120)
 
-    st.markdown('<div class="main-title">Bigganbaksho Digital Sales Dashboard</div>', unsafe_allow_html=True)
-    st.markdown('<div class="developer-text">Web App Developed By-Shujoy Shaha</div>', unsafe_allow_html=True)
-    st.markdown('<div class="slogan-text">ম্যানুয়েল কাজের দিন শেষ, বিজ্ঞানবাক্সে বাংলাদেশ</div>', unsafe_allow_html=True)
-    st.markdown('<div class="vision-text">অন্যরকম বাংলাদেশের স্বপ্ন নিয়ে</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="main-title">Bigganbaksho Digital Sales Dashboard</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="developer-text">Web App Developed By-Shujoy Shaha</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="slogan-text">ম্যানুয়েল কাজের দিন শেষ, বিজ্ঞানবাক্সে বাংলাদেশ</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="vision-text">অন্যরকম বাংলাদেশের স্বপ্ন নিয়ে</div>',
+        unsafe_allow_html=True
+    )
 
     # --- ফিল্টার ---
     st.sidebar.header("📅 Select Date Range")
@@ -590,7 +616,10 @@ try:
         )
 
     # --- ২. Agent-wise Report ---
-    st.markdown('<div class="section-header">Agent-wise Revenue Report</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-header">Agent-wise Revenue Report</div>',
+        unsafe_allow_html=True
+    )
 
     agent_data = f_df.groupby("Order Collector").agg(
         Revenue=("Revenue", "sum"),
@@ -642,7 +671,10 @@ try:
     show_copyable_table(agent_table, "agent_table")
 
     # --- ৩. Source-wise Report ---
-    st.markdown('<div class="section-header">Source-wise Revenue Report</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="section-header">Source-wise Revenue Report</div>',
+        unsafe_allow_html=True
+    )
 
     source_data = f_df.groupby("Source").agg(
         Revenue=("Revenue", "sum"),
@@ -694,14 +726,41 @@ try:
     show_copyable_table(source_table, "source_table")
 
     # --- ৪. বিস্তারিত অ্যানালিটিক্স ড্রপডাউন ---
-    st.markdown('<div class="section-header">Detailed Category Analytics</div>', unsafe_allow_html=True)
-
-    sel_agent = st.selectbox(
-        "Filter Reports by Agent:",
-        ["All Agents"] + sorted(list(f_df["Order Collector"].dropna().unique()))
+    st.markdown(
+        '<div class="section-header">Detailed Category Analytics</div>',
+        unsafe_allow_html=True
     )
 
-    p_df_f = f_df if sel_agent == "All Agents" else f_df[f_df["Order Collector"] == sel_agent]
+    # এখানে Source Filter এবং Agent Filter দুইটাই থাকবে
+    filter_col1, filter_col2 = st.columns(2)
+
+    with filter_col1:
+        source_options = ["All Sources"] + sorted(list(f_df["Source"].dropna().unique()))
+        sel_source = st.selectbox(
+            "Filter Reports by Source:",
+            source_options,
+            index=0,
+            key="detailed_source_filter"
+        )
+
+    source_filtered_df = f_df.copy()
+
+    if sel_source != "All Sources":
+        source_filtered_df = source_filtered_df[source_filtered_df["Source"] == sel_source]
+
+    with filter_col2:
+        agent_options = ["All Agents"] + sorted(list(source_filtered_df["Order Collector"].dropna().unique()))
+        sel_agent = st.selectbox(
+            "Filter Reports by Agent:",
+            agent_options,
+            index=0,
+            key="detailed_agent_filter"
+        )
+
+    p_df_f = source_filtered_df.copy()
+
+    if sel_agent != "All Agents":
+        p_df_f = p_df_f[p_df_f["Order Collector"] == sel_agent]
 
     curr_revenue = p_df_f["Revenue"].sum()
     curr_qty = p_df_f["Total Qty"].sum()
