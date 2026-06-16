@@ -243,7 +243,7 @@ def show_copyable_table(df_display, key_name):
 @st.cache_data(ttl=300)
 def load_data():
     url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vROzw82VfyjCSLWm0lxBh9lylW9t7D17AIRuznYyQQKa5umze0iBWEXGXCyHBIT5LJZzODlqgQRm7Ai/pub?gid=1622849396&single=true&output=csv"
-    df = pd.read_csv(url)
+    df = pd.read_csv(url, dtype={"AD ID": str})
 
     # Column clean
     df.columns = df.columns.astype(str).str.strip()
@@ -291,12 +291,12 @@ def load_data():
             df[price_col] = 0
 
     # Text column clean
-    for col in ["Order Collector", "Source", "District", "Class", "Age", "Profession"]:
+    for col in ["Order Collector", "Source", "District", "Class", "Age", "Profession", "AD ID"]:
         if col not in df.columns:
             df[col] = "Unknown"
 
-        df[col] = df[col].astype(str).str.strip()
-        df[col] = df[col].replace(["", "nan", "None", "0"], "Unknown")
+        df[col] = df[col].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+        df[col] = df[col].replace(["", "nan", "None", "0", "0.0"], "Unknown")
 
     # Source spelling normalize
     df["Source"] = df["Source"].replace({
@@ -387,7 +387,7 @@ def build_product_long_data(df_in):
         qty_col = f"Product QTY-{i}"
 
         if name_col in df_in.columns:
-            temp = df_in[[name_col, price_col, qty_col, "Unit Discount"]].copy()
+            temp = df_in[[name_col, price_col, qty_col, "Unit Discount", "AD ID"]].copy()
             temp = temp.rename(columns={
                 name_col: "Product",
                 price_col: "Unit Price",
@@ -395,6 +395,7 @@ def build_product_long_data(df_in):
             })
 
             temp["Product"] = temp["Product"].astype(str).str.strip()
+            temp["AD ID"] = temp["AD ID"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
             temp["Qty"] = pd.to_numeric(temp["Qty"], errors="coerce").fillna(0)
             temp["Unit Price"] = pd.to_numeric(temp["Unit Price"], errors="coerce").fillna(0)
             temp["Unit Discount"] = pd.to_numeric(temp["Unit Discount"], errors="coerce").fillna(0)
@@ -409,12 +410,12 @@ def build_product_long_data(df_in):
             # Sales Price = (Product Price - Discount per product) * QTY
             temp["Sales Price"] = (temp["Unit Price"] - temp["Unit Discount"]).clip(lower=0) * temp["Qty"]
 
-            all_items.append(temp[["Product", "Qty", "Sales Price"]])
+            all_items.append(temp[["AD ID", "Product", "Qty", "Sales Price"]])
 
     if all_items:
         return pd.concat(all_items, ignore_index=True)
 
-    return pd.DataFrame(columns=["Product", "Qty", "Sales Price"])
+    return pd.DataFrame(columns=["AD ID", "Product", "Qty", "Sales Price"])
 
 
 def render_product_report(df_in, total_qty):
@@ -500,7 +501,161 @@ def render_product_report(df_in, total_qty):
         )
 
 
-# ৭. Dynamic report
+# ৭. AD ID Report
+def render_ad_id_report(df_in):
+    st.markdown(
+        '<div class="section-header">AD ID Report</div>',
+        unsafe_allow_html=True
+    )
+
+    if "AD ID" not in df_in.columns:
+        st.info("AD ID column not found.")
+        return
+
+    ad_df = df_in.copy()
+    ad_df["AD ID"] = ad_df["AD ID"].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+
+    ad_df = ad_df[
+        (ad_df["AD ID"] != "") &
+        (ad_df["AD ID"] != "nan") &
+        (ad_df["AD ID"] != "0") &
+        (ad_df["AD ID"] != "Unknown")
+    ]
+
+    if ad_df.empty:
+        st.info("No AD ID data found.")
+        return
+
+    # Main AD ID summary
+    ad_stats = ad_df.groupby("AD ID").agg(
+        Revenue=("Revenue", "sum"),
+        Orders=("Revenue", "count"),
+        Qty=("Total Qty", "sum")
+    ).reset_index()
+
+    ad_stats = ad_stats.sort_values("Revenue", ascending=False)
+    ad_stats = ad_stats.rename(columns={"AD ID": "AD ID Name"})
+
+    total_ad_revenue = ad_stats["Revenue"].sum()
+    total_ad_orders = ad_stats["Orders"].sum()
+    total_ad_qty = ad_stats["Qty"].sum()
+
+    ad_stats["%"] = (
+        ad_stats["Revenue"] / (total_ad_revenue if total_ad_revenue > 0 else 1) * 100
+    )
+
+    # প্রথমে শুধু chart, পাশে কিছু থাকবে না
+    st.markdown("### AD ID-wise Revenue Chart")
+
+    plot_data = ad_stats.head(10).copy()
+
+    fig_ad = px.bar(
+        plot_data,
+        x="Revenue",
+        y="AD ID Name",
+        orientation="h",
+        color="AD ID Name",
+        color_discrete_sequence=px.colors.qualitative.Vivid,
+        text_auto=True
+    )
+
+    fig_ad.update_traces(
+        textfont=dict(size=14, color="black"),
+        textangle=0,
+        textposition="outside",
+        texttemplate="৳%{x:,}"
+    )
+
+    fig_ad.update_layout(
+        height=len(plot_data) * 45 + 70,
+        margin=dict(t=20, b=40, l=10, r=80),
+        yaxis={
+            "categoryorder": "array",
+            "categoryarray": plot_data["AD ID Name"].tolist()
+        },
+        xaxis=dict(tickformat=",d", title="Revenue"),
+        showlegend=False
+    )
+
+    st.plotly_chart(fig_ad, use_container_width=True)
+
+    # নিচে AD ID main table
+    st.markdown("### AD ID-wise Summary Table")
+
+    ad_table = ad_stats.copy()
+    ad_table["Revenue"] = ad_table["Revenue"].apply(lambda x: f"৳{int(round(float(x))):,}")
+    ad_table["Orders"] = ad_table["Orders"].apply(lambda x: f"{int(round(float(x))):,}")
+    ad_table["Qty"] = ad_table["Qty"].apply(lambda x: f"{int(round(float(x))):,}")
+    ad_table["%"] = ad_table["%"].map("{:.1f}%".format)
+
+    total_row = pd.DataFrame([{
+        "AD ID Name": "Total",
+        "Revenue": f"৳{int(round(float(total_ad_revenue))):,}",
+        "Orders": f"{int(round(float(total_ad_orders))):,}",
+        "Qty": f"{int(round(float(total_ad_qty))):,}",
+        "%": "100.0%"
+    }])
+
+    ad_table = pd.concat([ad_table, total_row], ignore_index=True)
+
+    show_copyable_table(
+        ad_table[["AD ID Name", "Revenue", "Orders", "Qty", "%"]],
+        "ad_id_summary_table"
+    )
+
+    # নিচে কোন AD ID থেকে কোন product কত পিস এবং revenue
+    st.markdown("### AD ID-wise Product Sales Table")
+
+    product_long = build_product_long_data(ad_df)
+
+    if product_long.empty:
+        st.info("No AD ID product data found.")
+        return
+
+    product_long = product_long[
+        (product_long["AD ID"] != "") &
+        (product_long["AD ID"] != "nan") &
+        (product_long["AD ID"] != "0") &
+        (product_long["AD ID"] != "Unknown")
+    ]
+
+    ad_product_stats = product_long.groupby(["AD ID", "Product"]).agg(
+        Value=("Qty", "sum"),
+        Revenue=("Sales Price", "sum")
+    ).reset_index()
+
+    ad_product_stats = ad_product_stats.sort_values(["AD ID", "Revenue"], ascending=[True, False])
+    ad_product_stats = ad_product_stats.rename(columns={"AD ID": "AD ID Name"})
+
+    total_product_revenue = ad_product_stats["Revenue"].sum()
+    total_product_qty = ad_product_stats["Value"].sum()
+
+    ad_product_stats["%"] = (
+        ad_product_stats["Revenue"] / (total_product_revenue if total_product_revenue > 0 else 1) * 100
+    )
+
+    ad_product_table = ad_product_stats.copy()
+    ad_product_table["Value"] = ad_product_table["Value"].apply(lambda x: f"{int(round(float(x))):,}")
+    ad_product_table["Revenue"] = ad_product_table["Revenue"].apply(lambda x: f"৳{int(round(float(x))):,}")
+    ad_product_table["%"] = ad_product_table["%"].map("{:.1f}%".format)
+
+    total_product_row = pd.DataFrame([{
+        "AD ID Name": "Total",
+        "Product": "",
+        "Value": f"{int(round(float(total_product_qty))):,}",
+        "Revenue": f"৳{int(round(float(total_product_revenue))):,}",
+        "%": "100.0%"
+    }])
+
+    ad_product_table = pd.concat([ad_product_table, total_product_row], ignore_index=True)
+
+    show_copyable_table(
+        ad_product_table[["AD ID Name", "Product", "Value", "Revenue", "%"]],
+        "ad_id_product_sales_table"
+    )
+
+
+# ৮. Dynamic report
 def render_report_dynamic(title, df_in, group_col, val_col, grand_total, is_currency=False, chart_top_10=True, table_limit_15=False):
     st.markdown(f"### {title}")
 
@@ -767,7 +922,10 @@ try:
 
     show_copyable_table(source_table, "source_table")
 
-    # --- ৪. বিস্তারিত অ্যানালিটিক্স ড্রপডাউন ---
+    # --- ৪. AD ID Report ---
+    render_ad_id_report(f_df)
+
+    # --- ৫. বিস্তারিত অ্যানালিটিক্স ড্রপডাউন ---
     st.markdown(
         '<div class="section-header">Detailed Category Analytics</div>',
         unsafe_allow_html=True
