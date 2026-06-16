@@ -155,8 +155,22 @@ def show_copyable_table(df_display, key_name):
         unsafe_allow_html=True
     )
 
+    # Total row পুরোটা bold করার জন্য
+    def bold_total_row(row):
+        first_cell = str(row.iloc[0]).replace("*", "").strip().lower()
+
+        if first_cell == "total":
+            return [
+                "font-weight: 900; color: #000000;"
+                for _ in row
+            ]
+
+        return ["" for _ in row]
+
+    styled_df = df_display.style.apply(bold_total_row, axis=1)
+
     st.dataframe(
-        df_display,
+        styled_df,
         use_container_width=True,
         hide_index=True,
         height=table_height
