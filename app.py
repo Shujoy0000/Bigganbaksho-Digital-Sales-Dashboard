@@ -312,7 +312,7 @@ def process_table_data(df, label_col, val_col, total_val, is_currency=False, lim
         final_df[val_col] / (total_val if total_val > 0 else 1) * 100
     ).map("{:.1f}%".format)
 
-    total_dict = {label_col: "**Total**", "%": "100.0%"}
+    total_dict = {label_col: "Total", "%": "100.0%"}
 
     for col in numeric_cols:
         if col == val_col:
@@ -444,7 +444,7 @@ def render_product_report(df_in, total_qty):
         product_table["Value"] = product_table["Value"].apply(lambda x: f"{int(x):,}")
 
         total_row = pd.DataFrame([{
-            "Product": "**Total**",
+            "Product": "Total",
             "Value": f"{int(total_qty):,}",
             "Sales Price": f"৳{int(total_product_sales):,}",
             "%": "100.0%"
@@ -731,7 +731,7 @@ try:
         unsafe_allow_html=True
     )
 
-    # এখানে Source Filter এবং Agent Filter দুইটাই থাকবে
+    # Source Filter + Agent Filter
     filter_col1, filter_col2 = st.columns(2)
 
     with filter_col1:
