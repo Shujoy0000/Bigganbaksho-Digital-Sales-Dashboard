@@ -25,7 +25,7 @@ st.markdown("""
         color: #333333 !important; 
         font-family: 'Segoe UI', sans-serif; 
     }
-    
+
     .main-title { 
         text-align: center; 
         color: #FF6600; 
@@ -57,7 +57,7 @@ st.markdown("""
         color: #777; 
         margin-bottom: 30px; 
     }
-    
+
     .metric-card { 
         background: #FFFFFF; 
         padding: 0px 2px; 
@@ -245,11 +245,9 @@ def load_data():
     url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vROzw82VfyjCSLWm0lxBh9lylW9t7D17AIRuznYyQQKa5umze0iBWEXGXCyHBIT5LJZzODlqgQRm7Ai/pub?gid=1622849396&single=true&output=csv"
     df = pd.read_csv(url, dtype={"AD ID": str})
 
-    # Column clean
     df.columns = df.columns.astype(str).str.strip()
     df = df.dropna(how="all")
 
-    # Date column
     if "Date" in df.columns:
         df["Report Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
     elif "Order Date" in df.columns:
@@ -257,10 +255,8 @@ def load_data():
     else:
         df["Report Date"] = pd.NaT
 
-    # Date না থাকলে report-এ আসবে না
     df = df.dropna(subset=["Report Date"])
 
-    # প্রয়োজনীয় numeric column
     needed_numeric_cols = [
         "Total Amount",
         "Shipping Charge",
@@ -275,7 +271,6 @@ def load_data():
             df[col] = 0
         df[col] = clean_number(df[col])
 
-    # Product QTY এবং Product Price-1 to 15 clean
     for i in range(1, 16):
         qty_col = f"Product QTY-{i}"
         price_col = f"Product Price-{i}"
@@ -290,7 +285,6 @@ def load_data():
         else:
             df[price_col] = 0
 
-    # Text column clean
     for col in ["Order Collector", "Source", "District", "Class", "Age", "Profession", "AD ID"]:
         if col not in df.columns:
             df[col] = "Unknown"
@@ -298,7 +292,6 @@ def load_data():
         df[col] = df[col].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         df[col] = df[col].replace(["", "nan", "None", "0", "0.0"], "Unknown")
 
-    # Source spelling normalize
     df["Source"] = df["Source"].replace({
         "FaceBook": "Facebook",
         "facebook": "Facebook",
@@ -307,19 +300,15 @@ def load_data():
         "FB": "Facebook"
     })
 
-    # Revenue = শীটের শেষের Product Price column
-    # fallback: Product Price blank হলে Total Amount - Shipping Charge
     fallback_revenue = df["Total Amount"] - df["Shipping Charge"]
     df["Revenue"] = df["Product Price"].where(df["Product Price"] > 0, fallback_revenue)
     df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce").fillna(0)
     df["Revenue"] = df["Revenue"].clip(lower=0)
 
-    # Total Sales = Revenue + Discount
     df["Total Sales"] = df["Revenue"] + df["Discount"]
     df["Total Sales"] = pd.to_numeric(df["Total Sales"], errors="coerce").fillna(0)
     df["Total Sales"] = df["Total Sales"].clip(lower=0)
 
-    # Product-wise sales price করার জন্য per product discount
     exact_unit_discount = df["Discount"] / df["Total Qty"].where(df["Total Qty"] > 0)
     df["Unit Discount"] = exact_unit_discount.fillna(df["Discount per product"]).fillna(0)
     df["Unit Discount"] = df["Unit Discount"].clip(lower=0)
@@ -407,7 +396,6 @@ def build_product_long_data(df_in):
                 (temp["Qty"] > 0)
             ]
 
-            # Sales Price = (Product Price - Discount per product) * QTY
             temp["Sales Price"] = (temp["Unit Price"] - temp["Unit Discount"]).clip(lower=0) * temp["Qty"]
 
             all_items.append(temp[["AD ID", "Product", "Qty", "Sales Price"]])
@@ -526,7 +514,6 @@ def render_ad_id_report(df_in):
         st.info("No AD ID data found.")
         return
 
-    # Main AD ID summary
     ad_stats = ad_df.groupby("AD ID").agg(
         Revenue=("Revenue", "sum"),
         Orders=("Revenue", "count"),
@@ -544,7 +531,6 @@ def render_ad_id_report(df_in):
         ad_stats["Revenue"] / (total_ad_revenue if total_ad_revenue > 0 else 1) * 100
     )
 
-    # প্রথমে শুধু chart, পাশে কিছু থাকবে না
     st.markdown("### AD ID-wise Revenue Chart")
 
     plot_data = ad_stats.head(10).copy()
@@ -579,7 +565,6 @@ def render_ad_id_report(df_in):
 
     st.plotly_chart(fig_ad, use_container_width=True)
 
-    # নিচে AD ID main table
     st.markdown("### AD ID-wise Summary Table")
 
     ad_table = ad_stats.copy()
@@ -603,7 +588,6 @@ def render_ad_id_report(df_in):
         "ad_id_summary_table"
     )
 
-    # নিচে কোন AD ID থেকে কোন product কত পিস এবং revenue
     st.markdown("### AD ID-wise Product Sales Table")
 
     product_long = build_product_long_data(ad_df)
@@ -776,8 +760,24 @@ try:
     default_start = max(min_date, today - datetime.timedelta(days=30)) if pd.notna(min_date) else today - datetime.timedelta(days=30)
     default_end = max_date if pd.notna(max_date) else today
 
-    start_date = st.sidebar.date_input("Start Date", default_start)
-    end_date = st.sidebar.date_input("End Date", default_end)
+    start_date = st.sidebar.date_input(
+        "Start Date",
+        value=default_start,
+        min_value=min_date,
+        max_value=max_date,
+        key="bb_start_date_copyable_block_v1"
+    )
+
+    end_date = st.sidebar.date_input(
+        "End Date",
+        value=default_end,
+        min_value=min_date,
+        max_value=max_date,
+        key="bb_end_date_copyable_block_v1"
+    )
+
+    if end_date < start_date:
+        end_date = start_date
 
     f_df = df[
         (df["Report Date"].dt.date >= start_date) &
@@ -931,7 +931,6 @@ try:
         unsafe_allow_html=True
     )
 
-    # Source Filter + Agent Filter
     filter_col1, filter_col2 = st.columns(2)
 
     with filter_col1:
@@ -966,10 +965,8 @@ try:
     curr_qty = p_df_f["Total Qty"].sum()
     curr_ords = len(p_df_f)
 
-    # Product report: chart Top 10, table all
     render_product_report(p_df_f, curr_qty)
 
-    # অন্যান্য রিপোর্ট: chart Top 10, table full
     render_report_dynamic(
         "Class-wise Distribution",
         p_df_f,
