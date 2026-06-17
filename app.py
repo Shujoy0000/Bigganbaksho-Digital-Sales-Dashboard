@@ -766,23 +766,46 @@ try:
     )
 
     # --- ফিল্টার ---
-    st.sidebar.header("📅 Select Date Range")
+st.sidebar.header("📅 Select Date Range")
 
-    today = datetime.date.today()
+today = datetime.date.today()
 
-    min_date = df["Report Date"].dt.date.min()
-    max_date = df["Report Date"].dt.date.max()
+min_date = df["Report Date"].dt.date.min()
+max_date = df["Report Date"].dt.date.max()
 
-    default_start = max(min_date, today - datetime.timedelta(days=30)) if pd.notna(min_date) else today - datetime.timedelta(days=30)
-    default_end = max_date if pd.notna(max_date) else today
+if pd.isna(min_date):
+    min_date = today - datetime.timedelta(days=30)
 
-    start_date = st.sidebar.date_input("Start Date", default_start)
-    end_date = st.sidebar.date_input("End Date", default_end)
+if pd.isna(max_date):
+    max_date = today
 
-    f_df = df[
-        (df["Report Date"].dt.date >= start_date) &
-        (df["Report Date"].dt.date <= end_date)
-    ]
+default_start = max(min_date, today - datetime.timedelta(days=30))
+default_end = max_date
+
+start_date = st.sidebar.date_input(
+    "Start Date",
+    value=default_start,
+    min_value=min_date,
+    max_value=max_date,
+    key="sales_start_date_fixed"
+)
+
+end_date = st.sidebar.date_input(
+    "End Date",
+    value=default_end,
+    min_value=min_date,
+    max_value=max_date,
+    key="sales_end_date_fixed"
+)
+
+if end_date < start_date:
+    st.sidebar.warning("End Date, Start Date-এর আগে হতে পারে না।")
+    end_date = start_date
+
+f_df = df[
+    (df["Report Date"].dt.date >= start_date) &
+    (df["Report Date"].dt.date <= end_date)
+]
 
     # --- ১. সামারি ---
     total_sales = int(round(f_df["Total Sales"].sum()))
