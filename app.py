@@ -139,6 +139,19 @@ def clean_key(text):
     return text.strip('_')
 
 
+def parse_report_date(series):
+    s = series.astype(str).str.strip()
+
+    # Normal date format: 16-06-2026 / 2026-06-16 / 2026/06/16
+    date_1 = pd.to_datetime(s, dayfirst=True, errors="coerce")
+
+    # Excel / Google Sheet serial date fallback
+    serial = pd.to_numeric(s, errors="coerce")
+    date_2 = pd.to_datetime(serial, unit="D", origin="1899-12-30", errors="coerce")
+
+    return date_1.fillna(date_2)
+
+
 def show_copyable_table(df_display, key_name):
     if df_display.empty:
         st.info("No data found.")
@@ -245,22 +258,18 @@ def load_data():
     url = "https://docs.google.com/spreadsheets/d/e/2PACX-1vROzw82VfyjCSLWm0lxBh9lylW9t7D17AIRuznYyQQKa5umze0iBWEXGXCyHBIT5LJZzODlqgQRm7Ai/pub?gid=1622849396&single=true&output=csv"
     df = pd.read_csv(url, dtype={"AD ID": str})
 
-    # Column clean
     df.columns = df.columns.astype(str).str.strip()
     df = df.dropna(how="all")
 
-    # Date column
     if "Date" in df.columns:
-        df["Report Date"] = pd.to_datetime(df["Date"], dayfirst=True, errors="coerce")
+        df["Report Date"] = parse_report_date(df["Date"])
     elif "Order Date" in df.columns:
-        df["Report Date"] = pd.to_datetime(df["Order Date"], dayfirst=True, errors="coerce")
+        df["Report Date"] = parse_report_date(df["Order Date"])
     else:
         df["Report Date"] = pd.NaT
 
-    # Date না থাকলে report-এ আসবে না
     df = df.dropna(subset=["Report Date"])
 
-    # প্রয়োজনীয় numeric column
     needed_numeric_cols = [
         "Total Amount",
         "Shipping Charge",
@@ -275,7 +284,6 @@ def load_data():
             df[col] = 0
         df[col] = clean_number(df[col])
 
-    # Product QTY এবং Product Price-1 to 15 clean
     for i in range(1, 16):
         qty_col = f"Product QTY-{i}"
         price_col = f"Product Price-{i}"
@@ -290,7 +298,6 @@ def load_data():
         else:
             df[price_col] = 0
 
-    # Text column clean
     for col in ["Order Collector", "Source", "District", "Class", "Age", "Profession", "AD ID"]:
         if col not in df.columns:
             df[col] = "Unknown"
@@ -298,7 +305,6 @@ def load_data():
         df[col] = df[col].astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
         df[col] = df[col].replace(["", "nan", "None", "0", "0.0"], "Unknown")
 
-    # Source spelling normalize
     df["Source"] = df["Source"].replace({
         "FaceBook": "Facebook",
         "facebook": "Facebook",
@@ -307,19 +313,15 @@ def load_data():
         "FB": "Facebook"
     })
 
-    # Revenue = শীটের শেষের Product Price column
-    # fallback: Product Price blank হলে Total Amount - Shipping Charge
     fallback_revenue = df["Total Amount"] - df["Shipping Charge"]
     df["Revenue"] = df["Product Price"].where(df["Product Price"] > 0, fallback_revenue)
     df["Revenue"] = pd.to_numeric(df["Revenue"], errors="coerce").fillna(0)
     df["Revenue"] = df["Revenue"].clip(lower=0)
 
-    # Total Sales = Revenue + Discount
     df["Total Sales"] = df["Revenue"] + df["Discount"]
     df["Total Sales"] = pd.to_numeric(df["Total Sales"], errors="coerce").fillna(0)
     df["Total Sales"] = df["Total Sales"].clip(lower=0)
 
-    # Product-wise sales price করার জন্য per product discount
     exact_unit_discount = df["Discount"] / df["Total Qty"].where(df["Total Qty"] > 0)
     df["Unit Discount"] = exact_unit_discount.fillna(df["Discount per product"]).fillna(0)
     df["Unit Discount"] = df["Unit Discount"].clip(lower=0)
@@ -407,7 +409,6 @@ def build_product_long_data(df_in):
                 (temp["Qty"] > 0)
             ]
 
-            # Sales Price = (Product Price - Discount per product) * QTY
             temp["Sales Price"] = (temp["Unit Price"] - temp["Unit Discount"]).clip(lower=0) * temp["Qty"]
 
             all_items.append(temp[["AD ID", "Product", "Qty", "Sales Price"]])
@@ -526,7 +527,6 @@ def render_ad_id_report(df_in):
         st.info("No AD ID data found.")
         return
 
-    # Main AD ID summary
     ad_stats = ad_df.groupby("AD ID").agg(
         Revenue=("Revenue", "sum"),
         Orders=("Revenue", "count"),
@@ -544,7 +544,6 @@ def render_ad_id_report(df_in):
         ad_stats["Revenue"] / (total_ad_revenue if total_ad_revenue > 0 else 1) * 100
     )
 
-    # প্রথমে শুধু chart, পাশে কিছু থাকবে না
     st.markdown("### AD ID-wise Revenue Chart")
 
     plot_data = ad_stats.head(10).copy()
@@ -579,7 +578,6 @@ def render_ad_id_report(df_in):
 
     st.plotly_chart(fig_ad, use_container_width=True)
 
-    # নিচে AD ID main table
     st.markdown("### AD ID-wise Summary Table")
 
     ad_table = ad_stats.copy()
@@ -603,7 +601,6 @@ def render_ad_id_report(df_in):
         "ad_id_summary_table"
     )
 
-    # নিচে কোন AD ID থেকে কোন product কত পিস এবং revenue
     st.markdown("### AD ID-wise Product Sales Table")
 
     product_long = build_product_long_data(ad_df)
@@ -744,6 +741,10 @@ def render_report_dynamic(title, df_in, group_col, val_col, grand_total, is_curr
 try:
     df = load_data()
 
+    if df.empty:
+        st.error("No valid date data found in the sheet.")
+        st.stop()
+
     # --- হেডার ---
     if os.path.exists(logo_path):
         st.image(logo_path, width=120)
@@ -766,46 +767,62 @@ try:
     )
 
     # --- ফিল্টার ---
-st.sidebar.header("📅 Select Date Range")
+    st.sidebar.header("📅 Select Date Range")
 
-today = datetime.date.today()
+    min_date = df["Report Date"].min().date()
+    max_date = df["Report Date"].max().date()
 
-min_date = df["Report Date"].dt.date.min()
-max_date = df["Report Date"].dt.date.max()
+    default_start = max(min_date, max_date - datetime.timedelta(days=30))
+    default_end = max_date
 
-if pd.isna(min_date):
-    min_date = today - datetime.timedelta(days=30)
+    date_range_key = "bb_digital_sales_date_range_v10"
 
-if pd.isna(max_date):
-    max_date = today
+    if st.sidebar.button("🔄 Reset Date Range"):
+        if date_range_key in st.session_state:
+            del st.session_state[date_range_key]
+        st.rerun()
 
-default_start = max(min_date, today - datetime.timedelta(days=30))
-default_end = max_date
+    if date_range_key in st.session_state:
+        saved_value = st.session_state[date_range_key]
 
-start_date = st.sidebar.date_input(
-    "Start Date",
-    value=default_start,
-    min_value=min_date,
-    max_value=max_date,
-    key="sales_start_date_fixed"
-)
+        valid_saved_value = (
+            isinstance(saved_value, tuple) and
+            len(saved_value) == 2 and
+            saved_value[0] >= min_date and
+            saved_value[1] <= max_date and
+            saved_value[1] >= saved_value[0]
+        )
 
-end_date = st.sidebar.date_input(
-    "End Date",
-    value=default_end,
-    min_value=min_date,
-    max_value=max_date,
-    key="sales_end_date_fixed"
-)
+        if not valid_saved_value:
+            del st.session_state[date_range_key]
 
-if end_date < start_date:
-    st.sidebar.warning("End Date, Start Date-এর আগে হতে পারে না।")
-    end_date = start_date
+    selected_range = st.sidebar.date_input(
+        "Date Range",
+        value=(default_start, default_end),
+        min_value=min_date,
+        max_value=max_date,
+        key=date_range_key
+    )
 
-f_df = df[
-    (df["Report Date"].dt.date >= start_date) &
-    (df["Report Date"].dt.date <= end_date)
-]
+    if isinstance(selected_range, tuple) and len(selected_range) == 2:
+        start_date, end_date = selected_range
+    elif isinstance(selected_range, tuple) and len(selected_range) == 1:
+        start_date = selected_range[0]
+        end_date = selected_range[0]
+    else:
+        start_date = default_start
+        end_date = default_end
+
+    if end_date < start_date:
+        st.sidebar.warning("End Date, Start Date-এর আগে হতে পারে না।")
+        end_date = start_date
+
+    st.sidebar.caption(f"Available data: {min_date.strftime('%Y/%m/%d')} to {max_date.strftime('%Y/%m/%d')}")
+
+    f_df = df[
+        (df["Report Date"].dt.date >= start_date) &
+        (df["Report Date"].dt.date <= end_date)
+    ]
 
     # --- ১. সামারি ---
     total_sales = int(round(f_df["Total Sales"].sum()))
@@ -954,7 +971,6 @@ f_df = df[
         unsafe_allow_html=True
     )
 
-    # Source Filter + Agent Filter
     filter_col1, filter_col2 = st.columns(2)
 
     with filter_col1:
@@ -989,10 +1005,8 @@ f_df = df[
     curr_qty = p_df_f["Total Qty"].sum()
     curr_ords = len(p_df_f)
 
-    # Product report: chart Top 10, table all
     render_product_report(p_df_f, curr_qty)
 
-    # অন্যান্য রিপোর্ট: chart Top 10, table full
     render_report_dynamic(
         "Class-wise Distribution",
         p_df_f,
